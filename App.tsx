@@ -1,145 +1,119 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { AppView, InvitationProject, InvitationPage, InvitationElement } from './types';
+import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import Footer from './components/Footer';
-import EditorScreen from './components/EditorScreen';
 import TemplateSelectionScreen from './components/TemplateSelectionScreen';
+import EditorScreen from './components/EditorScreen';
 import PreviewScreen from './components/PreviewScreen';
-import { getInitialPagesForTemplate } from './utils/templates';
-import { db, PROJECT_ID } from './db';
+import ProjectManagerScreen from './components/ProjectManagerScreen';
+import { db } from './db';
+import { migrateFromLocalStorage } from './utils/migration';
+import RestoreSessionPrompt from './components/RestoreSessionPrompt';
+import { cleanupOrphanedAssets } from './utils/cleanup';
 
-const LEGACY_STORAGE_KEY = 'sat18-invitation-session';
+type Screen = 'loading' | 'project_manager' | 'template_selection' | 'editor' | 'preview';
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<AppView>('templateSelection');
-  const [project, setProject] = useState<InvitationProject | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [screen, setScreen] = useState<Screen>('loading');
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [migratedProjectId, setMigratedProjectId] = useState<number | null>(null);
 
-  // Load project from DB or migrate from localStorage on initial load
   useEffect(() => {
-    const loadProject = async () => {
-      let loadedProject = await db.projects.get(PROJECT_ID);
-
-      if (!loadedProject) {
-        const legacyStateJSON = localStorage.getItem(LEGACY_STORAGE_KEY);
-        if (legacyStateJSON) {
-          console.log("Migrating from localStorage to IndexedDB...");
-          const { selectedTemplateId, elements } = JSON.parse(legacyStateJSON);
-          const migratedPage: InvitationPage = {
-            id: `page-${Date.now()}`,
-            name: 'Halaman Utama',
-            elements,
-            templateId: selectedTemplateId,
-          };
-          loadedProject = {
-            id: PROJECT_ID,
-            name: 'My Invitation',
-            lastModified: Date.now(),
-            pages: [migratedPage],
-          };
-          await db.projects.put(loadedProject);
-          localStorage.removeItem(LEGACY_STORAGE_KEY);
-          console.log("Migration complete.");
+    const initializeApp = async () => {
+      const projectId = await migrateFromLocalStorage();
+      if (projectId) {
+        setMigratedProjectId(projectId);
+        setScreen('project_manager');
+      } else {
+        const projectCount = await db.projects.count();
+        if (projectCount > 0) {
+            setScreen('project_manager');
+        } else {
+            setScreen('template_selection');
         }
       }
-
-      setProject(loadedProject);
-      if (loadedProject) {
-        setCurrentView('editor');
-      }
-      setIsLoading(false);
+      cleanupOrphanedAssets();
     };
-
-    loadProject();
+    
+    initializeApp();
   }, []);
-  
-  // Auto-save project to IndexedDB whenever it changes (debounced)
-  useEffect(() => {
-    if (project && !isLoading) {
-      const handler = setTimeout(() => {
-        console.log("Auto-saving project...");
-        db.projects.put({ ...project, lastModified: Date.now() });
-      }, 1000); // 1-second debounce
-      return () => clearTimeout(handler);
-    }
-  }, [project, isLoading]);
 
-  const handleSelectTemplate = (id: number) => {
-    const newProject: InvitationProject = {
-      id: PROJECT_ID,
-      name: `Undangan Baru`,
-      lastModified: Date.now(),
-      pages: getInitialPagesForTemplate(id),
-    };
-    setProject(newProject);
-    setCurrentView('editor');
+  const handleProjectCreated = (id: number) => {
+    setCurrentProjectId(id);
+    setScreen('editor');
   };
 
-  const handleBackToHome = async () => {
-    await db.projects.delete(PROJECT_ID);
-    setProject(null);
-    setCurrentView('templateSelection');
+  const handleOpenProject = (id: number) => {
+    setCurrentProjectId(id);
+    setScreen('editor');
+  };
+  
+  const handleCreateNew = () => {
+    setCurrentProjectId(null);
+    setScreen('template_selection');
+  }
+
+  const handleReturnToProjectManager = async () => {
+    setCurrentProjectId(null);
+    const projectCount = await db.projects.count();
+    setScreen(projectCount > 0 ? 'project_manager' : 'template_selection');
   };
 
   const handleGoToPreview = () => {
-    setCurrentView('preview');
+    setScreen('preview');
   };
-  
+
   const handleBackToEditor = () => {
-    setCurrentView('editor');
+    setScreen('editor');
+  };
+
+  const handleConfirmMigration = () => {
+      if (migratedProjectId) {
+          handleOpenProject(migratedProjectId);
+      }
+      setMigratedProjectId(null);
   };
   
-  if (isLoading) {
-    return (
-       <div className="flex justify-center items-center min-h-screen bg-soft-bg">
-        <p className="text-lg text-secondary-text">Memuat proyek...</p>
-      </div>
-    );
-  }
+  const handleDismissMigration = () => {
+      setMigratedProjectId(null);
+  };
 
-  const renderView = () => {
-    switch (currentView) {
+  const renderScreen = () => {
+    if (screen === 'loading') {
+        return <div className="flex justify-center items-center h-full"><p className="text-secondary-text animate-pulse">Memuat aplikasi...</p></div>;
+    }
+
+    switch (screen) {
+      case 'project_manager':
+        return <ProjectManagerScreen onOpenProject={handleOpenProject} onCreateNew={handleCreateNew} />;
+      case 'template_selection':
+        return <TemplateSelectionScreen onProjectCreated={handleProjectCreated} onBack={handleReturnToProjectManager} />;
       case 'editor':
-        if (project) {
-          return (
-            <EditorScreen 
-              project={project}
-              setProject={setProject}
-              onBack={handleBackToHome} 
-              onPreview={handleGoToPreview} 
-            />
-          );
+        if (currentProjectId) {
+          return <EditorScreen projectId={currentProjectId} onGoToPreview={handleGoToPreview} onExit={handleReturnToProjectManager} />;
         }
-        // Fallback if project is null
-        setCurrentView('templateSelection');
-        return null;
-        
+        break; // Fall through to error
       case 'preview':
-        if (project) {
-          return (
-            <PreviewScreen 
-              project={project}
-              onBackToEditor={handleBackToEditor} 
-            />
-          );
+        if (currentProjectId) {
+          return <PreviewScreen projectId={currentProjectId} onBackToEditor={handleBackToEditor} />;
         }
-        // Fallback if project is null
-        setCurrentView('templateSelection');
-        return null;
-
-      case 'templateSelection':
+        break; // Fall through to error
       default:
-        return (
-          <TemplateSelectionScreen onSelectTemplate={handleSelectTemplate} />
-        );
+        // Fallback for invalid states
+        return <div className="text-center p-8">Error: Status tidak valid. Silakan kembali ke <button onClick={handleReturnToProjectManager} className="text-blue-500 underline">daftar proyek</button>.</div>;
     }
   };
 
   return (
-    <div className="bg-soft-bg text-main-text flex flex-col min-h-screen">
+    <div className="flex flex-col h-screen bg-soft-bg font-poppins">
       <Header />
-      <main id="app" className="flex-1 flex flex-col overflow-auto">
-        {renderView()}
+      <main className="flex-1 overflow-auto">
+        {migratedProjectId && screen === 'project_manager' && (
+            <RestoreSessionPrompt 
+                onConfirm={handleConfirmMigration}
+                onDismiss={handleDismissMigration}
+            />
+        )}
+        {renderScreen()}
       </main>
       <Footer />
     </div>

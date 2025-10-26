@@ -1,7 +1,6 @@
-export type AppView = 'templateSelection' | 'editor' | 'preview';
+// types.ts
 
-// --- Element Types for Editor Canvas ---
-
+// Represents a single design element on a page (e.g., text, image)
 export interface BaseElement {
   id: string;
   type: 'text' | 'image';
@@ -15,7 +14,7 @@ export interface BaseElement {
 export interface TextElement extends BaseElement {
   type: 'text';
   text: string;
-  fontFamily: 'Poppins' | 'Playfair Display' | 'Great Vibes';
+  fontFamily: string;
   fontSize: number;
   color: string;
   textAlign: 'left' | 'center' | 'right';
@@ -23,13 +22,12 @@ export interface TextElement extends BaseElement {
 
 export interface ImageElement extends BaseElement {
   type: 'image';
-  src: string; // Base64 data URL
+  srcAssetId: number; // Foreign key to an Asset in IndexedDB
 }
 
 export type InvitationElement = TextElement | ImageElement;
 
-// --- Multi-page Project Structure ---
-
+// Represents a single page within an invitation project
 export interface InvitationPage {
   id: string;
   name: string;
@@ -37,9 +35,18 @@ export interface InvitationPage {
   templateId: number;
 }
 
+// Represents the entire invitation project
 export interface InvitationProject {
-  id: string; // A constant ID for the current project
+  id?: number; // Auto-incremented primary key in IndexedDB
+  uuid: string; // A unique identifier for session management/sharing
   name: string;
-  lastModified: number;
   pages: InvitationPage[];
+  lastModified: number; // Timestamp
+}
+
+// Represents a binary asset (like an image) stored in IndexedDB
+export interface Asset {
+  id?: number; // Auto-incremented primary key
+  projectId: number; // Foreign key to the project
+  blob: Blob;
 }
