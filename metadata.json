@@ -1,0 +1,5 @@
+{
+  "name": "SAT18 InviteMaker",
+  "description": "A browser-based, offline-first Progressive Web Application (PWA) to create beautiful invitations directly in your browser. This application runs without a backend and focuses on local data storage.",
+  "requestFramePermissions": []
+}
